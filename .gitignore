@@ -1,0 +1,26 @@
+# Xcode
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+*.xcscmblueprint
+*.xccheckout
+.swiftpm/
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Secrets (never commit API keys)
+Config/Secrets.xcconfig
+.env
+.env.*
+
+# Supabase CLI
+supabase/.temp/
+supabase/.branches/
+
+# macOS
+.DS_Store
+
+# Go backend (legacy)
+go-backend/bin/

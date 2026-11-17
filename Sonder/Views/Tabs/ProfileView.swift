@@ -1,152 +1,148 @@
 import SwiftUI
 
+/// The signed-in user's travel identity: personality, taste, stats, top cities, recommendations.
 struct ProfileView: View {
-    @EnvironmentObject var store: AppStore
-    @EnvironmentObject var auth: AuthStore
-    @State private var displayName: String = "Sonder Traveller"
-    private let supabase = SupabaseService.shared
+    @EnvironmentObject private var store: AppStore
+    @EnvironmentObject private var auth: AuthStore
+    @EnvironmentObject private var social: SocialStore
+    @Namespace private var zoom
+
+    private var me: UserSummary? {
+        guard let session = auth.session else { return nil }
+        return auth.profile ?? UserSummary(id: session.id, displayName: auth.displayName)
+    }
 
     var body: some View {
         NavigationStack {
-            ZStack {
-                Color.sonderBackground.ignoresSafeArea()
-                ScrollView {
-                    VStack(spacing: 28) {
-                        avatarHeader
-                        personalityCard
+            ScrollView {
+                VStack(spacing: 24) {
+                    VStack(spacing: 24) {
+                        header
+                        PersonalityCard(
+                            profile: store.travelProfile,
+                            isRefreshing: store.isRefreshingProfile,
+                            citiesNeeded: store.citiesUntilProfile
+                        )
                         statsRow
+                        tasteSection
                         topCitiesSection
-                        if !store.travelProfile.recommendations.isEmpty {
-                            FutureRecommendationsView(recommendations: store.travelProfile.recommendations)
-                        }
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.top, 24)
-                    .padding(.bottom, 32)
+                    .padding(.horizontal, SonderMetrics.screenPadding)
+
+                    if !store.travelProfile.recommendations.isEmpty {
+                        FutureRecommendationsView(recommendations: store.travelProfile.recommendations)
+                    }
                 }
+                .padding(.top, 12)
+                .padding(.bottom, 32)
             }
-            .task {
-                if let name = try? await supabase.fetchResolvedDisplayName() {
-                    if !name.isEmpty {
-                        displayName = name
-                    }
-                }
+            .sonderScreenBackground()
+            .refreshable {
+                await store.refreshAll()
+                await social.refresh()
+                await auth.loadProfile()
             }
             .navigationTitle("Profile")
-            .navigationBarTitleDisplayMode(.large)
-            .toolbarBackground(Color.sonderBackground, for: .navigationBar)
-            .toolbarColorScheme(.light, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        Task {
-                            await auth.signOut()
-                            store.resetForSignedOut()
-                        }
-                    } label: {
-                        Image(systemName: "rectangle.portrait.and.arrow.right")
+                    NavigationLink(value: Route.settings) {
+                        Image(systemName: "gearshape")
                     }
+                    .accessibilityLabel("Settings")
                 }
             }
+            .sonderDestinations(zoomNamespace: zoom)
         }
     }
 
-    // MARK: - Avatar + Name
+    // MARK: - Header
 
-    private var avatarHeader: some View {
-        HStack(spacing: 16) {
-            ZStack {
-                Circle()
-                    .fill(Color.sonderAccent.opacity(0.15))
-                Text("S")
-                    .font(.georgiaBold(28))
-                    .foregroundStyle(Color.sonderAccent)
-            }
-            .frame(width: 68, height: 68)
-            .overlay(Circle().stroke(Color.sonderAccent, lineWidth: 2))
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(displayName)
-                    .font(.georgiaBold(20))
-                    .foregroundStyle(Color.sonderTextPrimary)
-                Text("Travel that fits you.")
-                    .font(.georgiaItalic(14))
-                    .foregroundStyle(Color.sonderTextSecond)
-            }
-
-            Spacer()
-        }
-    }
-
-    // MARK: - Personality Card
-
-    private var personalityCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Label("Travel Personality", systemImage: "sparkles")
-                .font(.georgia(12))
-                .foregroundStyle(Color.sonderTextSecond)
-                .labelStyle(.titleAndIcon)
-
-            Text(store.travelProfile.personalityType)
-                .font(.georgiaBold(22))
-                .foregroundStyle(Color.sonderTextPrimary)
-
-            Text(store.travelProfile.personalityDescription)
-                .font(.georgia(15))
-                .foregroundStyle(Color.sonderTextSecond)
-                .fixedSize(horizontal: false, vertical: true)
-
-            if !store.travelProfile.tasteTraits.isEmpty {
-                FlowLayout(spacing: 8) {
-                    ForEach(store.travelProfile.tasteTraits, id: \.self) { trait in
-                        Text(trait)
-                            .font(.georgia(12))
-                            .foregroundStyle(Color.sonderSage)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 5)
-                            .background(Color.sonderSage.opacity(0.12))
-                            .clipShape(Capsule())
-                    }
-                }
-            } else {
-                Text("Rate attractions in 3+ cities to unlock your personality type.")
-                    .font(.georgia(13))
-                    .foregroundStyle(Color.sonderTextSecond)
-                    .italic()
-            }
-
-            if store.isLoadingProfile {
-                HStack(spacing: 8) {
-                    ProgressView().tint(Color.sonderAccent)
-                    Text("Analysing your travel taste…")
-                        .font(.georgia(13))
+    private var header: some View {
+        VStack(spacing: 16) {
+            HStack(spacing: 16) {
+                AvatarView(initials: me?.initials ?? "S", size: 72)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(auth.displayName)
+                        .font(.georgiaBold(22))
+                        .foregroundStyle(Color.sonderTextPrimary)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.8)
+                    Text("Travel that fits you.")
+                        .font(.georgiaItalic(14))
                         .foregroundStyle(Color.sonderTextSecond)
                 }
+                Spacer(minLength: 0)
+            }
+            .accessibilityElement(children: .combine)
+
+            if let me {
+                HStack(spacing: 0) {
+                    NavigationLink(value: Route.followers(me)) {
+                        followStat(count: social.myCounts.followers, label: social.myCounts.followers == 1 ? "Follower" : "Followers")
+                    }
+                    .buttonStyle(.plain)
+                    Rectangle().fill(Color.sonderDivider).frame(width: 1, height: 30)
+                    NavigationLink(value: Route.following(me)) {
+                        followStat(count: social.myCounts.following, label: "Following")
+                    }
+                    .buttonStyle(.plain)
+                    Rectangle().fill(Color.sonderDivider).frame(width: 1, height: 30)
+                    NavigationLink(value: Route.findPeople) {
+                        VStack(spacing: 3) {
+                            Image(systemName: "person.badge.plus")
+                                .font(.system(size: 17, weight: .medium))
+                                .foregroundStyle(Color.sonderAccent)
+                                .frame(height: 24)
+                            Text("Find people")
+                                .font(.georgia(12))
+                                .foregroundStyle(Color.sonderTextSecond)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.vertical, 12)
+                .background(Color.sonderSurface)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             }
         }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.sonderSurface)
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .shadow(color: .black.opacity(0.05), radius: 10, x: 0, y: 4)
     }
 
-    // MARK: - Stats Row
+    private func followStat(count: Int, label: String) -> some View {
+        VStack(spacing: 3) {
+            Text("\(count)")
+                .font(.georgiaBold(20))
+                .foregroundStyle(Color.sonderTextPrimary)
+                .monospacedDigit()
+                .frame(height: 24)
+            Text(label)
+                .font(.georgia(12))
+                .foregroundStyle(Color.sonderTextSecond)
+        }
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(count) \(label)")
+    }
+
+    // MARK: - Stats
 
     private var statsRow: some View {
         HStack(spacing: 0) {
-            statCell(value: "\(store.totalAttractionsRated)", label: "Attractions rated")
-            dividerLine
-            statCell(value: "\(store.ratedCities.count)", label: "Cities visited")
-            if let cat = store.favouriteCategory {
-                dividerLine
-                statCell(value: cat.components(separatedBy: " ").first ?? cat, label: "Top category")
+            statCell(value: "\(store.ratedCities.count)", label: store.ratedCities.count == 1 ? "City" : "Cities")
+            divider
+            statCell(value: "\(store.totalPlacesRated)", label: "Places rated")
+            divider
+            statCell(value: "\(store.countriesVisited)", label: store.countriesVisited == 1 ? "Country" : "Countries")
+            if let average = store.averageCityScore {
+                divider
+                statCell(value: ScoreFormat.string(average), label: "Avg score")
             }
         }
-        .frame(maxWidth: .infinity)
         .padding(.vertical, 16)
         .background(Color.sonderSurface)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .shadow(color: .black.opacity(0.04), radius: 8, x: 0, y: 2)
     }
 
@@ -157,70 +153,150 @@ struct ProfileView: View {
                 .foregroundStyle(Color.sonderAccent)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
+                .monospacedDigit()
             Text(label)
                 .font(.georgia(11))
                 .foregroundStyle(Color.sonderTextSecond)
                 .multilineTextAlignment(.center)
+                .lineLimit(2)
         }
         .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(value) \(label)")
     }
 
-    private var dividerLine: some View {
-        Rectangle()
-            .fill(Color.sonderDivider)
-            .frame(width: 1, height: 36)
+    private var divider: some View {
+        Rectangle().fill(Color.sonderDivider).frame(width: 1, height: 36)
     }
 
-    // MARK: - Top Cities
+    // MARK: - Taste
+
+    @ViewBuilder
+    private var tasteSection: some View {
+        let breakdown = store.tasteBreakdown
+        if !breakdown.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Your taste")
+                        .sonderSectionTitle()
+                    if let favourite = store.favouriteCategory {
+                        Label(favourite.shortName, systemImage: "heart.fill")
+                            .font(.georgia(12))
+                            .foregroundStyle(Color.sonderAccent)
+                            .fixedSize()
+                            .accessibilityLabel("Favourite category: \(favourite.shortName)")
+                    }
+                }
+                VStack(spacing: 14) {
+                    ForEach(breakdown, id: \.category) { item in
+                        ScoreBar(category: item.category, score: item.score)
+                    }
+                }
+                .sonderCard()
+                Text("Average score of the places you’ve rated in each category.")
+                    .font(.georgia(12))
+                    .foregroundStyle(Color.sonderTextSecond)
+            }
+        }
+    }
+
+    // MARK: - Top cities
 
     private var topCitiesSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Top Cities")
-                .font(.georgiaBold(20))
-                .foregroundStyle(Color.sonderTextPrimary)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Top Cities")
+                    .sonderSectionTitle()
+                if store.ratedCities.count > 3 {
+                    Button("See all") { store.selectedTab = .lists }
+                        .font(.georgia(14))
+                        .foregroundStyle(Color.sonderAccent)
+                        .fixedSize()
+                }
+            }
 
-            if store.ratedCities.isEmpty {
-                Text("Rate attractions in cities to build your rankings.")
-                    .font(.georgia(14))
-                    .foregroundStyle(Color.sonderTextSecond)
-                    .padding(.vertical, 12)
+            if !store.hasLoaded {
+                SkeletonCard()
+            } else if store.ratedCities.isEmpty {
+                EmptyStateView(
+                    icon: "mappin.and.ellipse",
+                    title: "Your rankings start here",
+                    message: "Rate the places you visited in a city to see it here.",
+                    actionTitle: "Add a city"
+                ) {
+                    store.isAddingCity = true
+                }
+                .sonderCard(padding: 0)
             } else {
-                ForEach(store.ratedCities.prefix(5)) { city in
-                    CityCardView(city: city)
+                ForEach(Array(store.ratedCities.prefix(3).enumerated()), id: \.element.id) { index, city in
+                    NavigationLink(value: Route.myCity(city.id)) {
+                        CityCardView(city: city, rank: index + 1)
+                    }
+                    .buttonStyle(.plain)
+                    .cityZoomSource(id: city.id, in: zoom)
                 }
             }
         }
     }
 }
 
-// MARK: - FlowLayout
+// MARK: - Personality card
 
-struct FlowLayout: Layout {
-    var spacing: CGFloat = 8
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        arrange(proposal: proposal, subviews: subviews).size
-    }
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let result = arrange(proposal: proposal, subviews: subviews)
-        for (index, pos) in result.positions.enumerated() {
-            subviews[index].place(at: CGPoint(x: bounds.minX + pos.x, y: bounds.minY + pos.y), proposal: .unspecified)
-        }
-    }
-    private func arrange(proposal: ProposedViewSize, subviews: Subviews) -> (size: CGSize, positions: [CGPoint]) {
-        var positions: [CGPoint] = []
-        var x: CGFloat = 0
-        var y: CGFloat = 0
-        var rowHeight: CGFloat = 0
-        let maxWidth = proposal.width ?? .infinity
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
-            if x + size.width > maxWidth && x > 0 {
-                x = 0; y += rowHeight + spacing; rowHeight = 0
+/// Travel personality, description and taste traits. Shared by own and other people's profiles.
+struct PersonalityCard: View {
+    let profile: TravelProfile
+    var isRefreshing = false
+    /// How many more cities are needed to unlock the personality (own profile only).
+    var citiesNeeded = 0
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Label("Travel Personality", systemImage: "sparkles")
+                    .font(.georgia(12))
+                    .foregroundStyle(Color.sonderTextSecond)
+                Spacer()
+                if isRefreshing {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(Color.sonderAccent)
+                        .accessibilityLabel("Updating your profile")
+                }
             }
-            positions.append(CGPoint(x: x, y: y))
-            rowHeight = max(rowHeight, size.height)
-            x += size.width + spacing
+
+            Text(profile.personalityType)
+                .font(.georgiaItalic(26))
+                .foregroundStyle(Color.sonderTextPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text(profile.personalityDescription)
+                .font(.georgia(15))
+                .foregroundStyle(Color.sonderTextSecond)
+                .lineSpacing(2)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if !profile.tasteTraits.isEmpty {
+                FlowLayout(spacing: 8) {
+                    ForEach(Array(profile.tasteTraits.enumerated()), id: \.offset) { _, trait in
+                        TagChip(text: trait)
+                    }
+                }
+            } else if citiesNeeded > 0 {
+                VStack(alignment: .leading, spacing: 8) {
+                    ProgressView(
+                        value: Double(AppStore.profileThreshold - citiesNeeded),
+                        total: Double(AppStore.profileThreshold)
+                    )
+                    .tint(Color.sonderAccent)
+                    Text(citiesNeeded == 1
+                         ? "Rate 1 more city to unlock your personality."
+                         : "Rate \(citiesNeeded) more cities to unlock your personality.")
+                        .font(.georgiaItalic(13))
+                        .foregroundStyle(Color.sonderTextSecond)
+                }
+            }
         }
-        return (CGSize(width: maxWidth, height: y + rowHeight), positions)
+        .sonderCard(padding: 18)
+        .accessibilityElement(children: .combine)
     }
 }

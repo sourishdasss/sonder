@@ -1,153 +1,247 @@
 import SwiftUI
 
+/// Social feed: what other travellers have been rating.
 struct FeedView: View {
-    @EnvironmentObject var store: AppStore
-    @State private var filter: FeedFilter = .everyone
-
-    enum FeedFilter: String, CaseIterable {
-        case everyone  = "Everyone"
-        case following = "Following"
-        case trending  = "Trending"
-    }
+    @EnvironmentObject private var store: AppStore
+    @EnvironmentObject private var social: SocialStore
 
     var body: some View {
         NavigationStack {
-            ZStack {
-                Color.sonderBackground.ignoresSafeArea()
-                ScrollView {
-                    LazyVStack(spacing: 16) {
-                        filterBar
-                        if store.isLoadingFeed {
-                            ProgressView()
-                                .tint(Color.sonderAccent)
-                                .padding(.vertical, 32)
-                        } else if store.feedItems.isEmpty {
-                            emptyState
-                        } else {
-                            ForEach(store.feedItems) { item in
-                                FeedCardView(item: item)
-                            }
+            ScrollView {
+                LazyVStack(spacing: 16) {
+                    scopePicker
+
+                    if store.isLoadingFeed && store.feedItems.isEmpty {
+                        ForEach(0..<3, id: \.self) { _ in SkeletonCard(height: 210) }
+                    } else if store.feedItems.isEmpty {
+                        emptyState
+                    } else if store.feedScope == .trending {
+                        trendingList
+                    } else {
+                        ForEach(store.feedItems) { item in
+                            FeedCardView(item: item)
                         }
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.top, 8)
                 }
-                .refreshable { await store.refreshFeed() }
+                .padding(.horizontal, SonderMetrics.screenPadding)
+                .padding(.top, 8)
+                .padding(.bottom, 24)
             }
+            .sonderScreenBackground()
+            .refreshable { await store.refreshFeed() }
             .navigationTitle("Feed")
-            .navigationBarTitleDisplayMode(.large)
-            .toolbarBackground(Color.sonderBackground, for: .navigationBar)
-            .toolbarColorScheme(.light, for: .navigationBar)
-        }
-    }
-
-    private var filterBar: some View {
-        HStack(spacing: 4) {
-            ForEach(FeedFilter.allCases, id: \.rawValue) { f in
-                Button {
-                    filter = f
-                } label: {
-                    Text(f.rawValue)
-                        .font(.georgia(14))
-                        .foregroundStyle(filter == f ? Color.sonderAccent : Color.sonderTextSecond)
-                        .padding(.vertical, 7)
-                        .padding(.horizontal, 14)
-                        .background(
-                            filter == f
-                                ? Color.sonderAccent.opacity(0.1)
-                                : Color.clear
-                        )
-                        .clipShape(Capsule())
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    NavigationLink(value: Route.findPeople) {
+                        Image(systemName: "person.badge.plus")
+                    }
+                    .accessibilityLabel("Find people")
                 }
-                .buttonStyle(.plain)
             }
-            Spacer()
+            .sonderDestinations()
         }
-        .padding(.bottom, 4)
     }
 
-    private var emptyState: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "globe.europe.africa")
-                .font(.system(size: 44))
-                .foregroundStyle(Color.sonderDivider)
-            Text("Nothing here yet.")
-                .font(.georgiaBold(17))
-                .foregroundStyle(Color.sonderTextPrimary)
-            Text("Add a city from Lists and your activity will appear here.")
-                .font(.georgia(14))
-                .foregroundStyle(Color.sonderTextSecond)
-                .multilineTextAlignment(.center)
+    private var scopePicker: some View {
+        Picker("Feed", selection: Binding(
+            get: { store.feedScope },
+            set: { scope in Task { await store.setFeedScope(scope) } }
+        )) {
+            ForEach(FeedScope.allCases) { scope in
+                Text(scope.rawValue).tag(scope)
+            }
         }
-        .padding(.vertical, 48)
-        .padding(.horizontal, 32)
+        .pickerStyle(.segmented)
+        .padding(.bottom, 2)
+    }
+
+    @ViewBuilder
+    private var emptyState: some View {
+        switch store.feedScope {
+        case .everyone:
+            EmptyStateView(
+                icon: "globe.europe.africa",
+                title: "Nothing here yet",
+                message: "Be the first: rate a city and it will show up here for other travellers.",
+                actionTitle: "Rate a city"
+            ) {
+                store.isAddingCity = true
+            }
+        case .following:
+            if social.followingIds.isEmpty {
+                VStack(spacing: 4) {
+                    EmptyStateView(
+                        icon: "person.2",
+                        title: "Follow some travellers",
+                        message: "See where the people you follow have been and how they rated it."
+                    )
+                    NavigationLink(value: Route.findPeople) {
+                        Text("Find people")
+                    }
+                    .buttonStyle(.sonderSecondary)
+                    .padding(.bottom, 32)
+                }
+            } else {
+                EmptyStateView(
+                    icon: "tray",
+                    title: "All quiet",
+                    message: "The people you follow haven’t rated anything yet."
+                )
+            }
+        case .trending:
+            EmptyStateView(
+                icon: "chart.line.uptrend.xyaxis",
+                title: "No trends this week",
+                message: "Cities rated in the last seven days will appear here."
+            )
+        }
+    }
+
+    private var trendingList: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Most rated in the last 7 days")
+                .font(.georgia(13))
+                .foregroundStyle(Color.sonderTextSecond)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            ForEach(Array(store.trendingCities.enumerated()), id: \.element.id) { index, city in
+                TrendingCityRow(city: city, position: index + 1)
+            }
+        }
     }
 }
+
+// MARK: - Feed card
 
 struct FeedCardView: View {
     let item: FeedItem
 
     var body: some View {
-        ZStack(alignment: .bottomLeading) {
-            if let urlString = item.cityPhotoURL, let url = URL(string: urlString) {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image.resizable().aspectRatio(contentMode: .fill)
-                    default:
-                        Color.sonderDivider
+        VStack(alignment: .leading, spacing: 0) {
+            NavigationLink(value: Route.user(item.author)) {
+                HStack(spacing: 10) {
+                    AvatarView(initials: item.author.initials, size: 36, filled: true)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(item.userName)
+                            .font(.georgiaBold(15))
+                            .foregroundStyle(Color.sonderTextPrimary)
+                            .lineLimit(1)
+                        Text("\(item.action.displayText) · \(item.relativeTime)")
+                            .font(.georgia(12))
+                            .foregroundStyle(Color.sonderTextSecond)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(12)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(item.userName) \(item.action.displayText), \(item.relativeTime)")
+            .accessibilityHint("Opens their profile")
+
+            ZStack(alignment: .bottomLeading) {
+                RemoteImage(item.cityPhotoURL, placeholderIcon: "building.2")
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 190)
+                    .clipped()
+
+                LinearGradient(colors: [.clear, .black.opacity(0.8)], startPoint: .center, endPoint: .bottom)
+
+                HStack(alignment: .bottom) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(item.city)
+                            .font(.georgiaBold(22))
+                            .foregroundStyle(.white)
+                            .lineLimit(1)
+                        if !item.country.isEmpty {
+                            Text(item.country)
+                                .font(.georgia(13))
+                                .foregroundStyle(.white.opacity(0.85))
+                        }
+                    }
+                    Spacer(minLength: 8)
+                    if let score = item.score {
+                        HStack(alignment: .firstTextBaseline, spacing: 4) {
+                            Text(ScoreFormat.string(score))
+                                .font(.georgiaBold(30))
+                                .foregroundStyle(Color.sonderScoreOnPhoto)
+                                .monospacedDigit()
+                            Text("/ 10")
+                                .font(.georgia(13))
+                                .foregroundStyle(.white.opacity(0.8))
+                        }
                     }
                 }
-                .frame(height: 190)
-            } else {
-                Color.sonderDivider.frame(height: 190)
+                .padding(14)
             }
-
-            LinearGradient(
-                colors: [.clear, .black.opacity(0.78)],
-                startPoint: .center,
-                endPoint: .bottom
+            .frame(height: 190)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(
+                item.score.map { "\(item.placeName), \(ScoreFormat.string($0)) out of 10" } ?? item.placeName
             )
 
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 8) {
-                    ZStack {
-                        Circle().fill(Color.sonderAccent)
-                        Text(String(item.userName.prefix(1)).uppercased())
-                            .font(.georgiaBold(11))
-                            .foregroundStyle(.white)
-                    }
-                    .frame(width: 26, height: 26)
+            if let review = item.review, !review.isEmpty {
+                Text(review)
+                    .font(.georgiaItalic(14))
+                    .foregroundStyle(Color.sonderTextPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(12)
+            }
+        }
+        .background(Color.sonderSurface)
+        .clipShape(RoundedRectangle(cornerRadius: SonderMetrics.cornerRadius, style: .continuous))
+        .shadow(color: .black.opacity(0.07), radius: 10, x: 0, y: 4)
+    }
+}
 
-                    Text("\(item.userName) \(item.action.displayText)")
-                        .font(.georgiaBold(14))
-                        .foregroundStyle(.white)
-                        .lineLimit(1)
-                }
+// MARK: - Trending row
 
-                HStack(spacing: 6) {
-                    Text("\(item.city), \(item.country)")
-                        .font(.georgia(13))
-                        .foregroundStyle(.white.opacity(0.85))
-                    if let score = item.score {
-                        Text("·").foregroundStyle(.white.opacity(0.5))
-                        Text(String(format: "%.1f", score))
-                            .font(.georgiaBold(13))
-                            .foregroundStyle(Color.sonderAccent)
-                    }
-                }
+struct TrendingCityRow: View {
+    let city: TrendingCity
+    let position: Int
 
-                if let review = item.review, !review.isEmpty {
-                    Text(review)
-                        .font(.georgia(12))
-                        .foregroundStyle(.white.opacity(0.8))
-                        .lineLimit(2)
+    var body: some View {
+        HStack(spacing: 12) {
+            Text("\(position)")
+                .font(.georgiaBold(18))
+                .foregroundStyle(position == 1 ? Color.sonderAccent : Color.sonderTextSecond)
+                .frame(width: 26)
+                .monospacedDigit()
+
+            RemoteImage(city.photoURL, placeholderIcon: "building.2")
+                .frame(width: 56, height: 56)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(city.city)
+                    .font(.georgiaBold(16))
+                    .foregroundStyle(Color.sonderTextPrimary)
+                    .lineLimit(1)
+                Text(city.ratingCount == 1 ? "1 traveller this week" : "\(city.ratingCount) travellers this week")
+                    .font(.georgia(13))
+                    .foregroundStyle(Color.sonderTextSecond)
+            }
+            Spacer(minLength: 8)
+            if city.averageScore > 0 {
+                VStack(alignment: .trailing, spacing: 0) {
+                    Text(ScoreFormat.string(city.averageScore))
+                        .font(.georgiaBold(20))
+                        .foregroundStyle(Color.sonderAccent)
+                        .monospacedDigit()
+                    Text("avg")
+                        .font(.georgia(11))
+                        .foregroundStyle(Color.sonderTextSecond)
                 }
             }
-            .padding(14)
         }
-        .frame(height: 190)
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .shadow(color: .black.opacity(0.08), radius: 8, x: 0, y: 4)
+        .padding(10)
+        .background(Color.sonderSurface)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(
+            "Number \(position), \(city.city), rated by \(city.ratingCount) "
+            + (city.ratingCount == 1 ? "traveller" : "travellers")
+            + (city.averageScore > 0 ? ", average \(ScoreFormat.string(city.averageScore))" : "")
+        )
     }
 }

@@ -1,0 +1,19 @@
+// Sonder build configuration (committed).
+//
+// These values are baked into Info.plist at build time and read by Config.swift.
+// The Supabase URL and anon key are public client values: row-level security (see
+// supabase/schema.sql) is what protects the data. Never put a service-role key here.
+//
+// Note: "//" starts a comment in xcconfig files, so URLs are written as https:/$()/host.
+
+SUPABASE_URL = https:/$()/ghgyqptnsgbytmuajhvl.supabase.co
+SUPABASE_ANON_KEY = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdoZ3lxcHRuc2dieXRtdWFqaHZsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM3MDQwMDQsImV4cCI6MjA4OTI4MDAwNH0.6Llmgl7a-I-ax3A2y9Y0qMeGODAe9sUNHw7pdpLq7yw
+
+// Claude model used for city summaries and travel profiles.
+CLAUDE_MODEL = claude-sonnet-5-5
+
+// Leave empty to write summaries and profiles on-device. To turn Claude on, copy
+// Secrets.example.xcconfig to Secrets.xcconfig (git-ignored) and set the key there.
+ANTHROPIC_API_KEY =
+
+#include? "Secrets.xcconfig"

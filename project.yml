@@ -1,33 +1,74 @@
-# Optional: run `brew install xcodegen` then `xcodegen` to generate Sonder.xcodeproj
+# Sonder.xcodeproj is generated from this file with XcodeGen:
+#   brew install xcodegen && xcodegen generate
 name: Sonder
 options:
   bundleIdPrefix: com.sonder
   deploymentTarget:
     iOS: "17.0"
-  xcodeVersion: "15.0"
-  generateEmptyDirectories: true
+  xcodeVersion: "16.0"
+  developmentLanguage: en
+  createIntermediateGroups: true
 packages:
   Supabase:
     url: https://github.com/supabase/supabase-swift
-    from: "2.0.0"
+    from: "2.41.1"
 settings:
   base:
     SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    DEAD_CODE_STRIPPING: YES
 targets:
   Sonder:
     type: application
     platform: iOS
     sources:
       - path: Sonder
-        excludes:
-          - "*.xcassets"
+    configFiles:
+      Debug: Config/Sonder.xcconfig
+      Release: Config/Sonder.xcconfig
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.sonder.app
         INFOPLIST_FILE: Sonder/Info.plist
-        SWIFT_EMIT_LOC_STRINGS: YES
-        TARGETED_DEVICE_FAMILY: "1,2"
+        GENERATE_INFOPLIST_FILE: NO
+        TARGETED_DEVICE_FAMILY: "1"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        CODE_SIGN_STYLE: Automatic
         ENABLE_PREVIEWS: YES
+        SWIFT_EMIT_LOC_STRINGS: YES
     dependencies:
       - package: Supabase
         product: Supabase
+  SonderTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: SonderTests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.sonder.app.tests
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: Sonder
+schemes:
+  Sonder:
+    build:
+      targets:
+        Sonder: all
+        SonderTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - SonderTests
+      # The test host launches with the in-memory backend so tests never touch the network.
+      environmentVariables:
+        SONDER_DEMO_MODE: "1"
+    profile:
+      config: Release
+    archive:
+      config: Release

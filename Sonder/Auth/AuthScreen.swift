@@ -1,18 +1,27 @@
 import SwiftUI
 
+/// Welcome screen plus sign-in / create-account form.
 struct AuthScreen: View {
-    @EnvironmentObject var auth: AuthStore
+    @EnvironmentObject private var auth: AuthStore
 
     @State private var started = false
-    @State private var mode: Mode = .signIn
-    @State private var firstName: String = ""
-    @State private var lastName: String = ""
-    @State private var email: String = ""
-    @State private var password: String = ""
+    @State private var mode: Mode = .signUp
+    @State private var firstName = ""
+    @State private var lastName = ""
+    @State private var email = ""
+    @State private var password = ""
+    @State private var showPassword = false
+    @FocusState private var focus: Field?
 
-    enum Mode: String, CaseIterable {
-        case signIn = "Sign In"
-        case signUp = "Create Account"
+    enum Mode {
+        case signIn, signUp
+
+        var title: String { self == .signIn ? "Welcome back" : "Create your account" }
+        var action: String { self == .signIn ? "Sign In" : "Create Account" }
+    }
+
+    enum Field: Hashable {
+        case firstName, lastName, email, password
     }
 
     var body: some View {
@@ -20,236 +29,304 @@ struct AuthScreen: View {
             Color.sonderBackground.ignoresSafeArea()
 
             ScrollView {
-                VStack(spacing: 22) {
-                    if !started {
-                        landingHeader
-                        flowDiagram
-                        VStack(spacing: 10) {
-                            getStartedButton
-                            signInLinkButton
-                        }
-                        footerCopy
+                VStack(spacing: 24) {
+                    if started {
+                        formContent
+                            .transition(.opacity.combined(with: .move(edge: .trailing)))
                     } else {
-                        backToLandingButton
-                        brandHeader
-
-                        authCard
-
-                        if auth.isLoading {
-                            ProgressView()
-                                .tint(Color.sonderAccent)
-                        }
-
-                        if let msg = auth.errorMessage, !msg.isEmpty {
-                            Text(msg)
-                                .font(.georgia(13))
-                                .foregroundStyle(Color.red)
-                                .multilineTextAlignment(.center)
-                                .padding(.horizontal, 16)
-                        }
+                        landingContent
+                            .transition(.opacity.combined(with: .move(edge: .leading)))
                     }
                 }
-                .padding(.horizontal, 16)
-                .padding(.top, 40)
-                .padding(.bottom, 24)
-            }
-        }
-    }
-
-    private var brandHeader: some View {
-        VStack(spacing: 6) {
-            Text("Sonder")
-                .font(.georgiaBold(44))
-                .foregroundStyle(Color.sonderAccent)
-
-            Text("Travel that fits you.")
-                .font(.georgiaItalic(16))
-                .foregroundStyle(Color.sonderTextSecond)
-        }
-        .padding(.top, 10)
-    }
-
-    // MARK: - Landing (pre-auth)
-
-    private var landingHeader: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "sparkles")
-                .font(.system(size: 58, weight: .semibold))
-                .foregroundStyle(Color.sonderAccent)
-                .padding(.bottom, 6)
-
-            Text("Find your Sonder.")
-                .font(.georgiaBold(30))
-                .foregroundStyle(Color.sonderTextPrimary)
-                .multilineTextAlignment(.center)
-
-            Text("Rate a few city vibes and get a travel personality + recommendations that actually match you.")
-                .font(.georgia(14))
-                .foregroundStyle(Color.sonderTextSecond)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(.top, 10)
-    }
-
-    private var flowDiagram: some View {
-        VStack(spacing: 14) {
-            HStack(alignment: .center, spacing: 10) {
-                stepPill(number: "1", title: "Rate cities")
-                Image(systemName: "arrow.right")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(Color.sonderDivider)
-                stepPill(number: "2", title: "Get your profile")
-                Image(systemName: "arrow.right")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(Color.sonderDivider)
-                stepPill(number: "3", title: "Discover matches")
-            }
-        }
-        .padding(16)
-        .background(Color.sonderSurface)
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .shadow(color: .black.opacity(0.04), radius: 10, x: 0, y: 4)
-    }
-
-    private func stepPill(number: String, title: String) -> some View {
-        VStack(spacing: 6) {
-            ZStack {
-                Circle()
-                    .fill(Color.sonderAccent.opacity(0.14))
-                    .frame(width: 34, height: 34)
-                Text(number)
-                    .font(.georgiaBold(14))
-                    .foregroundStyle(Color.sonderAccent)
-            }
-            Text(title)
-                .font(.georgiaBold(13))
-                .foregroundStyle(Color.sonderTextPrimary)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: 110)
-    }
-
-    private var getStartedButton: some View {
-        Button {
-            withAnimation(.easeInOut(duration: 0.2)) {
-                started = true
-                mode = .signUp
-            }
-        } label: {
-            Text("Get Started")
-                .font(.georgiaBold(16))
-                .foregroundStyle(.white)
+                .padding(.horizontal, 20)
+                .padding(.top, 36)
+                .padding(.bottom, 28)
+                .frame(maxWidth: 520)
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 13)
-                .background(Color.sonderAccent)
-                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .padding(.top, 4)
-    }
-
-    private var signInLinkButton: some View {
-        Button {
-            withAnimation(.easeInOut(duration: 0.2)) {
-                started = true
-                mode = .signIn
             }
-        } label: {
-            Text("Sign in")
-                .font(.georgiaBold(15))
-                .foregroundStyle(Color.sonderAccent)
-                .padding(.vertical, 6)
+            .scrollDismissesKeyboard(.interactively)
         }
-        .buttonStyle(.plain)
     }
 
-    private var backToLandingButton: some View {
-        HStack {
-            Button {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    started = false
-                }
-            } label: {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 18, weight: .semibold))
+    // MARK: - Landing
+
+    private var landingContent: some View {
+        VStack(spacing: 26) {
+            VStack(spacing: 8) {
+                Text("Sonder")
+                    .font(.georgiaBold(50))
                     .foregroundStyle(Color.sonderAccent)
+                Text("Travel that fits you.")
+                    .font(.georgiaItalic(18))
+                    .foregroundStyle(Color.sonderTextSecond)
             }
-            Spacer()
+            .padding(.top, 28)
+            .accessibilityElement(children: .combine)
+
+            Text("Rate the places you actually went — not the whole city. Sonder turns them into a score, a travel personality and where to go next.")
+                .font(.georgia(16))
+                .foregroundStyle(Color.sonderTextPrimary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+
+            VStack(spacing: 0) {
+                stepRow(icon: "list.number", title: "Rank what you visited",
+                        detail: "Loved it, fine or not for you — then quick head-to-heads.")
+                Divider().overlay(Color.sonderDivider)
+                stepRow(icon: "sparkles", title: "Get your city score",
+                        detail: "Weighted by what matters: neighbourhoods, food, culture.")
+                Divider().overlay(Color.sonderDivider)
+                stepRow(icon: "airplane.departure", title: "Discover your matches",
+                        detail: "A taste profile and destinations picked for you.")
+            }
+            .sonderCard(padding: 4)
+
+            VStack(spacing: 12) {
+                Button("Get Started") { begin(.signUp) }
+                    .buttonStyle(.sonderPrimary)
+
+                Button {
+                    begin(.signIn)
+                } label: {
+                    Text("I already have an account")
+                        .font(.georgiaBold(15))
+                        .foregroundStyle(Color.sonderAccent)
+                        .padding(.vertical, 8)
+                        .frame(maxWidth: .infinity)
+                }
+            }
+
+            if let message = auth.errorMessage, !message.isEmpty {
+                messageBanner(message, isError: true)
+            }
         }
-        .padding(.bottom, 4)
     }
 
-    private var footerCopy: some View {
-        Text("No credit card. Just better trips.")
-            .font(.georgia(13))
-            .foregroundStyle(Color.sonderTextSecond)
-            .multilineTextAlignment(.center)
-            .padding(.horizontal, 24)
-    }
-
-    private var authCard: some View {
-        VStack(spacing: 14) {
-            if mode == .signUp {
-                TextField("First name", text: $firstName)
-                    .textContentType(.givenName)
-                    .autocapitalization(.words)
-                    .font(.georgia(15))
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 12)
-                    .background(Color.sonderSurface)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-
-                TextField("Last name", text: $lastName)
-                    .textContentType(.familyName)
-                    .autocapitalization(.words)
-                    .font(.georgia(15))
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 12)
-                    .background(Color.sonderSurface)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    private func stepRow(icon: String, title: String, detail: String) -> some View {
+        HStack(alignment: .top, spacing: 14) {
+            Image(systemName: icon)
+                .font(.system(size: 17, weight: .medium))
+                .foregroundStyle(Color.sonderAccent)
+                .frame(width: 38, height: 38)
+                .background(Color.sonderAccent.opacity(0.12))
+                .clipShape(Circle())
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.georgiaBold(15))
+                    .foregroundStyle(Color.sonderTextPrimary)
+                Text(detail)
+                    .font(.georgia(13))
+                    .foregroundStyle(Color.sonderTextSecond)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            TextField("Email", text: $email)
-                .autocapitalization(.none)
-                .keyboardType(.emailAddress)
-                .textContentType(.emailAddress)
-                .font(.georgia(15))
-                .padding(.horizontal, 14)
-                .padding(.vertical, 12)
-                .background(Color.sonderSurface)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 12)
+        .accessibilityElement(children: .combine)
+    }
 
-            SecureField("Password", text: $password)
-                .font(.georgia(15))
-                .padding(.horizontal, 14)
-                .padding(.vertical, 12)
-                .background(Color.sonderSurface)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    private func begin(_ newMode: Mode) {
+        auth.clearMessages()
+        withAnimation(.easeInOut(duration: 0.25)) {
+            mode = newMode
+            started = true
+        }
+    }
+
+    // MARK: - Form
+
+    private var formContent: some View {
+        VStack(spacing: 20) {
+            HStack {
+                Button {
+                    focus = nil
+                    auth.clearMessages()
+                    withAnimation(.easeInOut(duration: 0.25)) { started = false }
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(Color.sonderAccent)
+                        .frame(width: 44, height: 44, alignment: .leading)
+                }
+                .accessibilityLabel("Back")
+                Spacer()
+            }
+
+            VStack(spacing: 6) {
+                Text(mode.title)
+                    .font(.georgiaBold(28))
+                    .foregroundStyle(Color.sonderTextPrimary)
+                Text(mode == .signIn ? "Sign in to pick up where you left off." : "It takes less than a minute.")
+                    .font(.georgia(15))
+                    .foregroundStyle(Color.sonderTextSecond)
+            }
+            .frame(maxWidth: .infinity)
+
+            VStack(spacing: 12) {
+                if mode == .signUp {
+                    HStack(spacing: 12) {
+                        TextField("First name", text: $firstName)
+                            .textContentType(.givenName)
+                            .textInputAutocapitalization(.words)
+                            .autocorrectionDisabled()
+                            .submitLabel(.next)
+                            .focused($focus, equals: .firstName)
+                            .onSubmit { focus = .lastName }
+                            .sonderField()
+                        TextField("Last name", text: $lastName)
+                            .textContentType(.familyName)
+                            .textInputAutocapitalization(.words)
+                            .autocorrectionDisabled()
+                            .submitLabel(.next)
+                            .focused($focus, equals: .lastName)
+                            .onSubmit { focus = .email }
+                            .sonderField()
+                    }
+                }
+
+                TextField("Email", text: $email)
+                    .textContentType(mode == .signIn ? .username : .emailAddress)
+                    .keyboardType(.emailAddress)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .submitLabel(.next)
+                    .focused($focus, equals: .email)
+                    .onSubmit { focus = .password }
+                    .sonderField()
+
+                HStack(spacing: 8) {
+                    Group {
+                        if showPassword {
+                            TextField("Password", text: $password)
+                        } else {
+                            SecureField("Password", text: $password)
+                        }
+                    }
+                    .textContentType(mode == .signIn ? .password : .newPassword)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .submitLabel(.go)
+                    .focused($focus, equals: .password)
+                    .onSubmit { submit() }
+
+                    Button {
+                        showPassword.toggle()
+                    } label: {
+                        Image(systemName: showPassword ? "eye.slash" : "eye")
+                            .foregroundStyle(Color.sonderTextSecond)
+                            .frame(width: 32, height: 24)
+                    }
+                    .accessibilityLabel(showPassword ? "Hide password" : "Show password")
+                }
+                .sonderField()
+
+                if mode == .signUp {
+                    Text("Use at least \(AuthStore.minimumPasswordLength) characters.")
+                        .font(.georgia(12))
+                        .foregroundStyle(Color.sonderTextSecond)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+
+            if let message = auth.errorMessage, !message.isEmpty {
+                messageBanner(message, isError: true)
+            }
+            if let message = auth.noticeMessage, !message.isEmpty {
+                messageBanner(message, isError: false)
+            }
 
             Button {
-                if mode == .signIn {
-                    Task { await auth.signIn(email: email, password: password) }
-                } else {
-                    Task { await auth.signUp(firstName: firstName, lastName: lastName, email: email, password: password) }
-                }
+                submit()
             } label: {
-                Text(mode == .signIn ? "Sign In" : "Create Account")
-                    .font(.georgiaBold(15))
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-                    .background(Color.sonderAccent)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                HStack(spacing: 8) {
+                    if auth.isWorking {
+                        ProgressView().tint(Color.sonderOnAccent)
+                    }
+                    Text(mode.action)
+                }
             }
-            .disabled(
-                auth.isLoading
-                || email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                || password.isEmpty
-                || (mode == .signUp && (firstName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    || lastName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
-            )
+            .buttonStyle(.sonderPrimary)
+            .disabled(!canSubmit)
+
+            VStack(spacing: 4) {
+                if mode == .signIn {
+                    Button("Forgot password?") {
+                        focus = nil
+                        Task { await auth.sendPasswordReset(email: email) }
+                    }
+                    .font(.georgia(14))
+                    .foregroundStyle(Color.sonderAccent)
+                    .padding(.vertical, 6)
+                    .disabled(auth.isWorking)
+                }
+
+                Button {
+                    auth.clearMessages()
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        mode = mode == .signIn ? .signUp : .signIn
+                    }
+                } label: {
+                    Text(mode == .signIn ? "New here? Create an account" : "Already have an account? Sign in")
+                        .font(.georgiaBold(14))
+                        .foregroundStyle(Color.sonderAccent)
+                        .padding(.vertical, 6)
+                }
+                .disabled(auth.isWorking)
+            }
+
+            if mode == .signUp {
+                Text("Your ratings and profile are visible to other Sonder travellers.")
+                    .font(.georgia(12))
+                    .foregroundStyle(Color.sonderTextSecond)
+                    .multilineTextAlignment(.center)
+                    .padding(.top, 2)
+            }
         }
+        .onAppear {
+            focus = mode == .signUp ? .firstName : .email
+        }
+    }
+
+    private var canSubmit: Bool {
+        guard !auth.isWorking else { return false }
+        let hasCredentials = !email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !password.isEmpty
+        if mode == .signIn { return hasCredentials }
+        return hasCredentials && !firstName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func submit() {
+        guard canSubmit else { return }
+        focus = nil
+        Task {
+            switch mode {
+            case .signIn:
+                await auth.signIn(email: email, password: password)
+            case .signUp:
+                await auth.signUp(firstName: firstName, lastName: lastName, email: email, password: password)
+                // When email confirmation is required, move to sign-in ready for after they confirm.
+                if auth.noticeMessage != nil, !auth.isSignedIn {
+                    password = ""
+                    withAnimation { mode = .signIn }
+                }
+            }
+        }
+    }
+
+    private func messageBanner(_ message: String, isError: Bool) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: isError ? "exclamationmark.triangle.fill" : "envelope.badge.fill")
+                .foregroundStyle(isError ? Color.sonderDanger : Color.sonderSage)
+            Text(message)
+                .font(.georgia(14))
+                .foregroundStyle(Color.sonderTextPrimary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(14)
+        .background((isError ? Color.sonderDanger : Color.sonderSage).opacity(0.1))
+        .clipShape(RoundedRectangle(cornerRadius: SonderMetrics.smallCornerRadius, style: .continuous))
+        .accessibilityElement(children: .combine)
     }
 }
-

@@ -1,422 +1,246 @@
 import SwiftUI
-import MapKit
 
+/// The user's rated places, as city rankings or grouped by category.
 struct ListsView: View {
-    @EnvironmentObject var store: AppStore
-    @State private var showAddCity = false
-    @State private var listMode: ListMode = .rankings
+    @EnvironmentObject private var store: AppStore
+    @State private var mode: ListMode = .rankings
+    @State private var cityToDelete: RatedCity?
+    @Namespace private var zoom
 
-    enum ListMode: String, CaseIterable {
-        case rankings   = "Rankings"
+    enum ListMode: String, CaseIterable, Identifiable {
+        case rankings = "Rankings"
         case categories = "Categories"
+        var id: String { rawValue }
     }
 
     var body: some View {
         NavigationStack {
-            ZStack {
-                Color.sonderBackground.ignoresSafeArea()
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 20) {
-                        modePicker
-                        if listMode == .rankings {
-                            rankingsContent
-                        } else {
-                            categoriesContent
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    Picker("View", selection: $mode) {
+                        ForEach(ListMode.allCases) { mode in
+                            Text(mode.rawValue).tag(mode)
                         }
                     }
-                    .padding(16)
+                    .pickerStyle(.segmented)
+
+                    if !store.hasLoaded {
+                        loadingContent
+                    } else if store.ratedCities.isEmpty {
+                        emptyContent
+                    } else if mode == .rankings {
+                        rankingsContent
+                    } else {
+                        categoriesContent
+                    }
                 }
+                .padding(SonderMetrics.screenPadding)
             }
+            .sonderScreenBackground()
+            .refreshable { await store.refreshAll() }
             .navigationTitle("Lists")
-            .navigationBarTitleDisplayMode(.large)
-            .toolbarBackground(Color.sonderBackground, for: .navigationBar)
-            .toolbarColorScheme(.light, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
-                    Button { showAddCity = true } label: {
-                        Label("Add City", systemImage: "plus.circle.fill")
-                            .labelStyle(.iconOnly)
-                            .font(.title2)
-                            .foregroundStyle(Color.sonderAccent)
+                    Button {
+                        store.isAddingCity = true
+                    } label: {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.title3)
                     }
+                    .accessibilityLabel("Add a city")
                 }
             }
-            .sheet(isPresented: $showAddCity) {
-                AddCityPickerView(isPresented: $showAddCity)
-                    .presentationDetents([.medium, .large])
+            .sonderDestinations(zoomNamespace: zoom)
+            .confirmationDialog(
+                "Delete \(cityToDelete?.cityData.city ?? "this city")?",
+                isPresented: Binding(
+                    get: { cityToDelete != nil },
+                    set: { if !$0 { cityToDelete = nil } }
+                ),
+                titleVisibility: .visible,
+                presenting: cityToDelete
+            ) { city in
+                Button("Delete", role: .destructive) {
+                    Task { await store.deleteCity(city) }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: { _ in
+                Text("Your ratings for this city will be removed. This can’t be undone.")
             }
         }
     }
 
-    private var modePicker: some View {
-        HStack(spacing: 0) {
-            ForEach(ListMode.allCases, id: \.rawValue) { mode in
-                Button {
-                    listMode = mode
-                } label: {
-                    Text(mode.rawValue)
-                        .font(listMode == mode ? .georgiaBold(15) : .georgia(15))
-                        .foregroundStyle(listMode == mode ? Color.sonderAccent : Color.sonderTextSecond)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10)
-                        .background(
-                            listMode == mode
-                                ? Color.sonderAccent.opacity(0.1)
-                                : Color.sonderSurface
-                        )
-                }
-                .buttonStyle(.plain)
+    // MARK: - States
+
+    @ViewBuilder
+    private var loadingContent: some View {
+        if let error = store.loadError {
+            EmptyStateView(
+                icon: "wifi.exclamationmark",
+                title: "Couldn’t load your cities",
+                message: error,
+                actionTitle: "Try again"
+            ) {
+                Task { await store.refreshAll() }
+            }
+        } else {
+            VStack(spacing: 14) {
+                ForEach(0..<3, id: \.self) { _ in SkeletonCard() }
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.sonderDivider, lineWidth: 1)
-        )
     }
+
+    private var emptyContent: some View {
+        EmptyStateView(
+            icon: "map",
+            title: "No cities yet",
+            message: "Log your first destination and rank the places you visited to get its score.",
+            actionTitle: "Add your first city"
+        ) {
+            store.isAddingCity = true
+        }
+        .sonderCard(padding: 0)
+    }
+
+    // MARK: - Rankings
 
     private var rankingsContent: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            if store.ratedCities.isEmpty {
-                emptyRankings
-            } else {
-                ForEach(Array(store.ratedCities.enumerated()), id: \.element.id) { index, city in
-                    HStack(alignment: .top, spacing: 14) {
-                        // Rank number
-                        Text("#\(index + 1)")
-                            .font(.georgiaBold(18))
-                            .foregroundStyle(index == 0 ? Color.sonderAccent : Color.sonderTextSecond)
-                            .frame(width: 32)
-                            .padding(.top, 2)
-
-                        CityCardView(city: city)
+        LazyVStack(alignment: .leading, spacing: 14) {
+            if let average = store.averageCityScore, store.ratedCities.count > 1 {
+                Text("\(store.ratedCities.count) cities · average \(ScoreFormat.string(average))")
+                    .font(.georgia(13))
+                    .foregroundStyle(Color.sonderTextSecond)
+            }
+            ForEach(Array(store.ratedCities.enumerated()), id: \.element.id) { index, city in
+                NavigationLink(value: Route.myCity(city.id)) {
+                    CityCardView(city: city, rank: index + 1)
+                }
+                .buttonStyle(.plain)
+                .cityZoomSource(id: city.id, in: zoom)
+                .contextMenu {
+                    Button {
+                        store.editingCity = city
+                    } label: {
+                        Label("Edit ratings", systemImage: "pencil")
+                    }
+                    Button(role: .destructive) {
+                        cityToDelete = city
+                    } label: {
+                        Label("Delete city", systemImage: "trash")
                     }
                 }
+                .accessibilityHint("Shows the full breakdown")
             }
         }
     }
 
-    private var emptyRankings: some View {
-        VStack(spacing: 14) {
-            Image(systemName: "map")
-                .font(.system(size: 40))
-                .foregroundStyle(Color.sonderDivider)
-            Text("No cities yet")
-                .font(.georgiaBold(17))
-                .foregroundStyle(Color.sonderTextPrimary)
-            Text("Tap + to log your first destination.")
-                .font(.georgia(14))
-                .foregroundStyle(Color.sonderTextSecond)
-            Button {
-                showAddCity = true
-            } label: {
-                Text("Add your first city")
-                    .font(.georgiaBold(15))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 11)
-                    .background(Color.sonderAccent)
-                    .clipShape(Capsule())
+    // MARK: - Categories
+
+    private struct CategoryEntry: Identifiable {
+        let place: ScoredPlace
+        let city: RatedCity
+        var id: String { "\(city.id.uuidString)-\(place.id.uuidString)" }
+    }
+
+    private func entries(for category: AttractionCategory) -> [CategoryEntry] {
+        store.ratedCities
+            .flatMap { city in
+                city.scoredPlaces
+                    .filter { $0.attraction.category == category }
+                    .map { CategoryEntry(place: $0, city: city) }
             }
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 40)
+            .sorted { lhs, rhs in
+                if lhs.place.score != rhs.place.score { return lhs.place.score > rhs.place.score }
+                return lhs.place.attraction.name < rhs.place.attraction.name
+            }
     }
 
     private var categoriesContent: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            ForEach(AttractionCategory.allCases.filter { $0 != .general }, id: \.rawValue) { cat in
-                categoryRow(cat)
+        LazyVStack(alignment: .leading, spacing: 14) {
+            ForEach(AttractionCategory.placeCategories) { category in
+                CategorySection(category: category, entries: entries(for: category))
             }
         }
     }
 
-    private func categoryRow(_ cat: AttractionCategory) -> some View {
-        let ratingsForCat = store.ratedCities.flatMap { city in
-            city.ratings.compactMap { r -> (String, VisitSentiment, Int)? in
-                guard let att = city.cityData.attractions.first(where: { $0.id == r.attractionId }),
-                      att.category == cat else { return nil }
-                return (att.name, r.sentiment, r.rankAmongSimilar)
-            }
+    private struct CategorySection: View {
+        let category: AttractionCategory
+        let entries: [CategoryEntry]
+        @State private var expanded = false
+
+        private var visible: [CategoryEntry] {
+            expanded ? entries : Array(entries.prefix(5))
         }
 
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Image(systemName: cat.icon)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(Color.sonderSage)
-                Text(cat.rawValue)
-                    .font(.georgiaBold(16))
-                    .foregroundStyle(Color.sonderTextPrimary)
-                Spacer()
-                Text("\(ratingsForCat.count)")
-                    .font(.georgiaBold(14))
-                    .foregroundStyle(Color.sonderTextSecond)
-            }
-
-            if ratingsForCat.isEmpty {
-                Text("Nothing logged in this category yet.")
-                    .font(.georgia(13))
-                    .foregroundStyle(Color.sonderTextSecond)
-            } else {
-                ForEach(Array(ratingsForCat.prefix(8).enumerated()), id: \.offset) { _, row in
-                    let (name, sentiment, rank) = row
-                    HStack(alignment: .firstTextBaseline) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(name)
-                                .font(.georgia(14))
-                                .foregroundStyle(Color.sonderTextPrimary)
-                            Text(sentiment.shortLabel)
-                                .font(.georgia(11))
-                                .foregroundStyle(Color.sonderTextSecond)
-                        }
-                        Spacer()
-                        Text("#\(rank)")
-                            .font(.georgiaBold(12))
-                            .foregroundStyle(Color.sonderAccent)
-                    }
+        var body: some View {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    Image(systemName: category.icon)
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(Color.sonderSage)
+                    Text(category.rawValue)
+                        .font(.georgiaBold(16))
+                        .foregroundStyle(Color.sonderTextPrimary)
+                    Spacer()
+                    Text("\(entries.count)")
+                        .font(.georgiaBold(14))
+                        .foregroundStyle(Color.sonderTextSecond)
+                        .accessibilityLabel(entries.count == 1 ? "1 place" : "\(entries.count) places")
                 }
-            }
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.sonderSurface)
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .shadow(color: .black.opacity(0.04), radius: 6, x: 0, y: 2)
-    }
-}
+                .padding(.bottom, 4)
+                .accessibilityElement(children: .combine)
+                .accessibilityAddTraits(.isHeader)
 
-struct AddCityPickerView: View {
-    @Binding var isPresented: Bool
-    @EnvironmentObject var store: AppStore
-    @StateObject private var citySearch = CitySearchCompleterService()
-    @State private var selectedCity: CityData?
-    @State private var manualCity = ""
-    @State private var isSearchingFullQuery = false
-    @State private var isResolvingPick = false
-    @State private var fullSearchResults: [ResolvedCityPlace] = []
-
-    private var trimmedQuery: String {
-        manualCity.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private var showUseAsTypedFallback: Bool {
-        !trimmedQuery.isEmpty
-            && !citySearch.completerIsLoading
-            && !isSearchingFullQuery
-            && citySearch.suggestions.isEmpty
-            && fullSearchResults.isEmpty
-    }
-
-    var body: some View {
-        NavigationStack {
-            ZStack {
-                Color.sonderBackground.ignoresSafeArea()
-                List {
-                    if citySearch.completerIsLoading && !trimmedQuery.isEmpty {
-                        HStack(spacing: 10) {
-                            ProgressView()
-                            Text("Searching…")
-                                .font(.georgia(14))
-                                .foregroundStyle(Color.sonderTextSecond)
-                        }
-                        .listRowBackground(Color.sonderSurface)
-                    }
-
-                    if !citySearch.suggestions.isEmpty {
-                        Section {
-                            ForEach(citySearch.suggestions.map(CityCompletionRow.init)) { row in
-                                Button {
-                                    selectCompletion(row.completion)
-                                } label: {
-                                    citySuggestionLabel(row.completion)
-                                }
-                                .listRowBackground(Color.sonderSurface)
-                            }
-                        } header: {
-                            Text("Suggestions")
-                                .font(.georgia(13))
-                                .foregroundStyle(Color.sonderTextSecond)
-                                .textCase(nil)
-                        }
-                    }
-
-                    if isSearchingFullQuery {
-                        HStack(spacing: 10) {
-                            ProgressView()
-                            Text("Looking up places…")
-                                .font(.georgia(14))
-                                .foregroundStyle(Color.sonderTextSecond)
-                        }
-                        .listRowBackground(Color.sonderSurface)
-                    }
-
-                    if !fullSearchResults.isEmpty {
-                        Section {
-                            ForEach(fullSearchResults, id: \.self) { place in
-                                Button {
-                                    selectedCity = Attractions.templateCity(city: place.city, country: place.country)
-                                } label: {
-                                    cityResultLabel(city: place.city, country: place.country)
-                                }
-                                .listRowBackground(Color.sonderSurface)
-                            }
-                        } header: {
-                            Text("Results")
-                                .font(.georgia(13))
-                                .foregroundStyle(Color.sonderTextSecond)
-                                .textCase(nil)
-                        }
-                    }
-
-                    if showUseAsTypedFallback {
-                        Section {
-                            Button {
-                                selectedCity = Attractions.templateCity(city: trimmedQuery, country: "")
-                            } label: {
-                                Text("Use “\(trimmedQuery)”")
-                                    .font(.georgia(14))
-                                    .foregroundStyle(Color.sonderAccent)
-                            }
-                            .listRowBackground(Color.sonderSurface)
-                        } header: {
-                            Text("No matches")
-                                .font(.georgia(13))
-                                .foregroundStyle(Color.sonderTextSecond)
-                                .textCase(nil)
-                        }
-                    }
-
-                    if trimmedQuery.isEmpty {
-                        Section {
-                            Text("Start typing a city or town — suggestions appear as you type, like Apple Maps. Tap Search on the keyboard for a full place lookup.")
-                                .font(.georgia(14))
-                                .foregroundStyle(Color.sonderTextSecond)
-                                .listRowBackground(Color.sonderSurface)
-                        }
-                    }
-                }
-                .listStyle(.insetGrouped)
-                .scrollContentBackground(.hidden)
-
-                if isResolvingPick {
-                    Color.black.opacity(0.12)
-                        .ignoresSafeArea()
-                    ProgressView()
-                        .scaleEffect(1.15)
-                }
-            }
-            .navigationTitle("Add City")
-            .navigationBarTitleDisplayMode(.large)
-            .searchable(
-                text: $manualCity,
-                placement: .navigationBarDrawer(displayMode: .always),
-                prompt: "Search cities or towns"
-            )
-            .textInputAutocapitalization(.words)
-            .submitLabel(.search)
-            .onChange(of: manualCity) { _, new in
-                citySearch.updateQueryFragment(new)
-            }
-            .onSubmit(of: .search) {
-                runFullTextSearch()
-            }
-            .toolbarBackground(Color.sonderBackground, for: .navigationBar)
-            .toolbarColorScheme(.light, for: .navigationBar)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { isPresented = false }
-                        .font(.georgia(15))
-                        .foregroundStyle(Color.sonderAccent)
-                }
-            }
-            .fullScreenCover(item: $selectedCity, onDismiss: {
-                citySearch.reset()
-                manualCity = ""
-                fullSearchResults = []
-            }) { city in
-                AddCitySheet(cityData: city) {
-                    selectedCity = nil
-                    isPresented = false
-                    manualCity = ""
-                    fullSearchResults = []
-                    citySearch.reset()
-                }
-            }
-        }
-    }
-
-    private func citySuggestionLabel(_ completion: MKLocalSearchCompletion) -> some View {
-        HStack(alignment: .center, spacing: 12) {
-            Image(systemName: "mappin.and.ellipse")
-                .font(.body)
-                .foregroundStyle(Color.sonderTextSecond)
-                .frame(width: 28, alignment: .center)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(completion.title)
-                    .font(.georgiaBold(16))
-                    .foregroundStyle(Color.sonderTextPrimary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                if !completion.subtitle.isEmpty {
-                    Text(completion.subtitle)
+                if entries.isEmpty {
+                    Text("Nothing logged in this category yet.")
                         .font(.georgia(13))
                         .foregroundStyle(Color.sonderTextSecond)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    ForEach(Array(visible.enumerated()), id: \.element.id) { index, entry in
+                        NavigationLink(value: Route.myCity(entry.city.id)) {
+                            HStack(spacing: 12) {
+                                Text("\(index + 1)")
+                                    .font(.georgiaBold(15))
+                                    .foregroundStyle(index == 0 ? Color.sonderAccent : Color.sonderTextSecond)
+                                    .frame(width: 22, alignment: .trailing)
+                                    .monospacedDigit()
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(entry.place.attraction.name)
+                                        .font(.georgia(15))
+                                        .foregroundStyle(Color.sonderTextPrimary)
+                                        .multilineTextAlignment(.leading)
+                                    Text("\(entry.city.cityData.city) \(entry.city.cityData.flag)")
+                                        .font(.georgia(12))
+                                        .foregroundStyle(Color.sonderTextSecond)
+                                }
+                                Spacer(minLength: 8)
+                                SentimentChip(sentiment: entry.place.sentiment, compact: true)
+                                Text(ScoreFormat.string(entry.place.score))
+                                    .font(.georgiaBold(15))
+                                    .foregroundStyle(Color.sonderAccent)
+                                    .monospacedDigit()
+                            }
+                            .padding(.vertical, 5)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(
+                            "Number \(index + 1), \(entry.place.attraction.name) in \(entry.city.cityData.city), "
+                            + "\(ScoreFormat.string(entry.place.score)) out of 10"
+                        )
+                    }
+                    if entries.count > 5 {
+                        Button(expanded ? "Show less" : "Show all \(entries.count)") {
+                            withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() }
+                        }
+                        .font(.georgia(13))
+                        .foregroundStyle(Color.sonderAccent)
+                        .padding(.top, 4)
+                    }
                 }
             }
+            .sonderCard(padding: 14, radius: 16)
         }
-        .padding(.vertical, 4)
-        .contentShape(Rectangle())
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(completion.title), \(completion.subtitle)")
-    }
-
-    private func cityResultLabel(city: String, country: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(city)
-                .font(.georgiaBold(16))
-                .foregroundStyle(Color.sonderTextPrimary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            if !country.isEmpty {
-                Text(country)
-                    .font(.georgia(13))
-                    .foregroundStyle(Color.sonderTextSecond)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }
-        .padding(.vertical, 6)
-        .contentShape(Rectangle())
-    }
-
-    private func selectCompletion(_ completion: MKLocalSearchCompletion) {
-        isResolvingPick = true
-        CitySearchCompleterService.resolveCompletion(completion) { place in
-            isResolvingPick = false
-            guard let place else { return }
-            selectedCity = Attractions.templateCity(city: place.city, country: place.country)
-        }
-    }
-
-    private func runFullTextSearch() {
-        let q = trimmedQuery
-        guard !q.isEmpty else { return }
-        isSearchingFullQuery = true
-        fullSearchResults = []
-        CitySearchCompleterService.searchPlaces(query: q) { places in
-            isSearchingFullQuery = false
-            fullSearchResults = places
-        }
-    }
-}
-
-// MARK: - Stable rows for MKLocalSearchCompletion
-
-private struct CityCompletionRow: Identifiable {
-    let id: String
-    let completion: MKLocalSearchCompletion
-
-    init(_ completion: MKLocalSearchCompletion) {
-        self.completion = completion
-        self.id = "\(completion.title)|\(completion.subtitle)"
     }
 }

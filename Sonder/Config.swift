@@ -1,36 +1,65 @@
 import Foundation
 
+/// App configuration.
+///
+/// Values come from build settings (`Config/Sonder.xcconfig`, plus the git-ignored
+/// `Config/Secrets.xcconfig`) which are baked into Info.plist at build time. In debug builds,
+/// environment variables of the same name override them, which is handy for pointing a
+/// simulator run at a local Supabase stack.
 enum Config {
-    /// Supabase project URL (from Project Settings → API).
-    static var supabaseURL: String {
-        ProcessInfo.processInfo.environment["SUPABASE_URL"]
-            ?? "https://ghgyqptnsgbytmuajhvl.supabase.co"
+    /// Supabase project URL.
+    static var supabaseURL: URL? {
+        let raw = value(env: "SUPABASE_URL", plist: "SonderSupabaseURL")
+        guard !raw.isEmpty, let url = URL(string: raw), url.host != nil else { return nil }
+        return url
     }
 
-    /// Supabase anon (public) key. Safe to use in the app; RLS protects data.
-    /// Never use the service_role key in client code.
+    /// Supabase anon/publishable key. Public by design: row-level security protects the data.
+    /// Never ship the service-role key in the app.
     static var supabaseAnonKey: String {
-        ProcessInfo.processInfo.environment["SUPABASE_ANON_KEY"]
-            ?? "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdoZ3lxcHRuc2dieXRtdWFqaHZsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM3MDQwMDQsImV4cCI6MjA4OTI4MDAwNH0.6Llmgl7a-I-ax3A2y9Y0qMeGODAe9sUNHw7pdpLq7yw"
+        value(env: "SUPABASE_ANON_KEY", plist: "SonderSupabaseAnonKey")
     }
 
-    /// Go backend base URL (used for /api/city-score and /api/travel-profile).
-    /// In iOS Simulator, `localhost` typically reaches the Mac host.
-    static var goAIBaseURL: String {
-        ProcessInfo.processInfo.environment["GO_AI_BASE_URL"] ?? "http://127.0.0.1:8080"
+    /// Anthropic API key. When empty, Sonder writes summaries and profiles on-device instead.
+    static var anthropicAPIKey: String {
+        value(env: "ANTHROPIC_API_KEY", plist: "SonderAnthropicAPIKey")
     }
 
-    /// Feature flag: when false, we compute city scores + travel profile locally.
-    /// Set `AI_ENABLED=true` to turn Gemini/Go AI back on.
-    static var aiEnabled: Bool {
-        let raw = ProcessInfo.processInfo.environment["AI_ENABLED"] ?? "false"
-        return raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "true"
+    /// Claude model used for city summaries and travel profiles.
+    static var claudeModel: String {
+        let configured = value(env: "CLAUDE_MODEL", plist: "SonderClaudeModel")
+        return configured.isEmpty ? "claude-sonnet-5-5" : configured
     }
 
-    /// Feature flag: keep the app functional without setting up feed tables/policies.
-    /// Set `FEED_ENABLED=true` when you want the social feed.
-    static var feedEnabled: Bool {
-        let raw = ProcessInfo.processInfo.environment["FEED_ENABLED"] ?? "false"
-        return raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "true"
+    static var isAIEnabled: Bool { !anthropicAPIKey.isEmpty }
+
+    static var appVersion: String {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "1"
+        return "\(version) (\(build))"
+    }
+
+    /// Debug-only demo mode: runs fully in memory with sample data and no network backend.
+    /// Launch with the `-SonderDemoMode YES` argument (or `SONDER_DEMO_MODE=1`).
+    static var isDemoMode: Bool {
+        #if DEBUG
+        if UserDefaults.standard.bool(forKey: "SonderDemoMode") { return true }
+        return ProcessInfo.processInfo.environment["SONDER_DEMO_MODE"] == "1"
+        #else
+        return false
+        #endif
+    }
+
+    private static func value(env: String, plist: String) -> String {
+        #if DEBUG
+        if let override = ProcessInfo.processInfo.environment[env]?
+            .trimmingCharacters(in: .whitespacesAndNewlines), !override.isEmpty {
+            return override
+        }
+        #endif
+        let raw = (Bundle.main.object(forInfoDictionaryKey: plist) as? String ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        // An unresolved build setting shows up literally as "$(NAME)".
+        return raw.contains("$(") ? "" : raw
     }
 }
